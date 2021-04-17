@@ -1,0 +1,2 @@
+/home/dewbaunchee/951007/VorivodaMatvey/1.c
+/home/dewbaunchee/OS/main.c

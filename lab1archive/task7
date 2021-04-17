@@ -1,0 +1,17 @@
+#!/bin/bash
+
+>"task7err.log"
+
+if [[ $# < 2 ]]
+then
+	echo $(basename $0)": Error: Count of missing arguments: "$((2 - $#))>&2
+	echo $(basename $0)": Error: Count of missing arguments: "$((2 - $#))>> "task7err.log"
+	exit 1
+fi
+
+exec 2>>"task7err.log"
+
+if `gcc $1 -o $2`
+then
+	./$2
+fi

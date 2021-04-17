@@ -1,0 +1,16 @@
+#!/bin/bash
+
+>"task5err.log"
+
+if [[ $# = 0 ]]
+then
+	echo $(basename $0)": Error: No arguments" >&2
+	echo $(basename $0)": Error: No arguments" >> "task5err.log"
+	exit 1
+fi
+
+>"task5out.txt"
+for argument in $*
+do
+	echo $argument | tee -a "task5out"
+done

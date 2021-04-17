@@ -1,0 +1,18 @@
+#!/bin/bash
+
+>"task6err.log"
+
+if [[ $# < 3 ]]
+then
+	echo $(basename $0)"Error. Count of missing arguments: "$(( 3-$# )) >& 2
+	echo $(basename $0)"Error. Count of missing arguments: "$(( 3-$# )) >> "task6err.log"
+	exit 1
+fi
+
+exec > >(tee $1)
+list=`find "$2" -name "*.$3"`
+
+for file in $list
+do
+	echo $file
+done

@@ -1,0 +1,228 @@
+/*
+Для заданного каталога  (аргумент 1 командной строки)
+и всех его подкаталогов вывести в заданный файл
+(аргумент 2 командной строки) и на консоль полный путь,
+размер и дату создания, удовлетворяющих заданным условиям:
+1 – размер файла находится в заданных пределах от N1 до N2
+(N1,N2 задаются в аргументах командной строки), 2 – дата создания
+находится в заданных пределах от M1 до M2 (M1,M2 задаются в аргументах командной строки).
+dd.mm.yy
+*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <string.h>
+#include <errno.h>
+#include <libgen.h>
+#include <time.h>
+
+#define IS_LEAP_YEAR(y) ((y) % 4 == 0) - ((y) % 100 == 0) + ((y) % 400 == 0)
+
+#define REQ_ARG_COUNT 7
+
+
+const char * progname;
+const char * startDir;
+long minSize, maxSize;
+long minDate, maxDate;
+FILE * output;
+
+int isCorrectNumber(const char * num) {
+	while(*num != 0) {
+		if(*num < '0' || *num > '9') return 0;
+		num++;
+	}
+	return 1;
+}
+
+int checkNumber(const char * num) {
+	if(!isCorrectNumber(num)) {
+		fprintf(stderr, "%s: Error. %s is invalid number.\n", progname, num);
+		return 1;
+	}
+	return 0;
+}
+
+int isDigit(char c) {
+	return c >= '0' && c <= '9';
+}
+
+struct tm getTime(const char * date) {
+	time_t t;
+	time(&t);
+	struct tm time = *localtime(&t);
+	char * buf = calloc(5, sizeof(char));
+	buf[0] = date[0];
+	buf[1] = date[1];
+	time.tm_mday = atoi(buf);
+	buf[0] = date[3];
+	buf[1] = date[4];
+	time.tm_mon = atoi(buf) - 1;
+	time.tm_year = atoi(date + 6) - 1900;
+	free(buf);
+	return time;
+}
+
+const int dayCountInMonth[] = {31, 28, 31, 30, 31, 30,
+				31, 31, 30, 31, 30, 31};
+
+int isCorrectDate(const char * date) {
+	if(isDigit(date[0]) && isDigit(date[1]) && date[2] == '.' && isDigit(date[3]) && isDigit(date[4])
+	 && date[5] == '.' && isDigit(date[6]) && isDigit(date[7]) && isDigit(date[8]) && isDigit(date[9])) {
+		 struct tm time = getTime(date);
+		 if(time.tm_mon < 0 || time.tm_mon > 11) {
+			 return 0;
+		 }
+		 if(time.tm_year < 70) {
+			 return 0;
+		 }
+		 if(time.tm_mday < 1 || time.tm_mday > dayCountInMonth[time.tm_mon] + (time.tm_mon == 1 && IS_LEAP_YEAR(time.tm_year + 1900))) {
+			 return 0;
+		 }
+		 return 1;
+	} else {
+		return 0;
+	}
+}
+
+int checkDate(const char * date) {
+	if(!isCorrectDate(date)) {
+		fprintf(stderr, "%s: Error. %s is invalid date.\n", progname, date);
+		return 1;
+	}
+	return 0;
+}
+
+int checkDir(const char * path) {
+	DIR * dir = opendir(path);
+	if(dir == 0) {
+		fprintf(stderr, "%s: Error. Invalid catalog. %s\n", progname, strerror(errno));
+		return -1;
+	}
+	if(closedir(dir) != 0) {
+		fprintf(stderr, "%s: Error during closing catalog. %s\n", progname, strerror(errno));
+		return -1;
+	}
+	return 0;
+}
+
+int checkFile(FILE * file) {
+	if(file == 0) {
+		fprintf(stderr, "%s: Error. %s.\n", progname, strerror(errno));
+		if(errno == 24) exit(1);
+		return 1;
+	}
+	return 0;
+}
+
+void wrappedCloseFile(FILE * file) {
+	if(fclose(file) != 0) {
+		fprintf(stderr, "%s: Error during closing file. %s\n", progname, strerror(errno));
+	}
+}
+
+char * getFullPath(const char * path, const char * name) {
+	char * answer = calloc(strlen(path) + strlen(name) + 2, sizeof(char));
+	strcpy(answer, path);
+	if(answer[strlen(answer) - 1] != '/')
+		strcat(answer, "/");
+	strcat(answer, name);
+	return answer;
+}
+
+void rec(const char * start) {
+	DIR *dir = opendir(start);
+	if(dir == 0) {
+		printf("%s: Can't open dir: [%s]: %s\n", progname, start, strerror(errno));
+		return;
+	}
+
+	struct dirent * current;
+	struct stat * info = (struct stat *) calloc(1, sizeof(struct stat));
+
+	while((current = readdir(dir)) != NULL) {
+		if(strcmp(current->d_name, ".") == 0
+		|| strcmp(current->d_name, "..") == 0) continue;
+
+		const char * currentPath = getFullPath(start, current->d_name);
+
+		if(current->d_type == DT_DIR) {
+			rec(currentPath);
+			continue;
+		}
+
+		if(current->d_type == DT_REG) {
+			if(stat(currentPath, info)) {
+				fprintf(stderr, "%s: Error while getting stat of [%s]: %s\n", progname, currentPath, strerror(errno));
+				continue;
+			}
+
+			if(info->st_size > minSize
+			&& info->st_size < maxSize
+			&& info->st_ctime >= minDate
+			&& info->st_ctime <= maxDate) {
+				struct tm * createTime = localtime(&info->st_ctime);
+				char * bufDate = calloc(32, sizeof(char));
+				strftime(bufDate, 32, "%d.%m.%Y", createTime);
+				fprintf(output, "%s %ld %s\n", currentPath, info->st_size, bufDate);
+				free(bufDate);
+			}
+		}
+	}
+
+	free(info);
+	if(closedir(dir) != 0) {
+		fprintf(stderr, "%s: Error during closing catalog. %s\n", progname, strerror(errno));
+	}
+}
+
+void solveTask() {
+	rec(startDir);
+}
+
+int main(int argc, char * argv[]) {
+	progname = basename(argv[0]);
+
+	if(argc < REQ_ARG_COUNT) {
+		fprintf(stderr, "%s: Error. Count of missing argument: %d\n",
+			progname, REQ_ARG_COUNT - argc);
+		fprintf(stderr, "Command should be: %s <start_catalog> <output_file> <min_size> <max_size> <min_date> <max_date>\n", progname);
+		return -1;
+	}
+
+	startDir = argv[1];
+	char hasErrors = checkDir(startDir);
+	output = fopen(argv[2], "w");
+	hasErrors = hasErrors || checkFile(output);
+
+	hasErrors = hasErrors || checkNumber(argv[3]);
+	hasErrors = hasErrors || checkNumber(argv[4]);
+	hasErrors = hasErrors || checkDate(argv[5]);
+	hasErrors = hasErrors || checkDate(argv[6]);
+
+	if(hasErrors) return -1;
+
+	minSize = atol(argv[3]);
+	maxSize = atol(argv[4]);
+	struct tm minD = getTime(argv[5]);
+	struct tm maxD = getTime(argv[6]);
+	minDate = mktime(&minD);
+	maxDate = mktime(&maxD);
+	solveTask();
+
+	wrappedCloseFile(output);
+
+	if((output = fopen(argv[2], "r")) != 0) {
+		while(1) {
+			char c = getc(output);
+			if(feof(output)) break;
+			putc(c, stdout);
+		}
+	}
+
+	wrappedCloseFile(output);
+
+	return 0;
+}

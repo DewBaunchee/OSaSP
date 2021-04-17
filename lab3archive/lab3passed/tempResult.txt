@@ -1,0 +1,7 @@
+42255 /home/dewbaunchee/951007/VorivodaMatvey/lab3/tempResult.txt 0
+42305 /home/dewbaunchee/951007/VorivodaMatvey/lab1archive/task5out.txt 0
+42307 /home/dewbaunchee/951007/VorivodaMatvey/lab1archive/lab1.sh 0
+42309 /home/dewbaunchee/951007/VorivodaMatvey/lab1archive/lab1out 0
+42316 /home/dewbaunchee/951007/VorivodaMatvey/lab1archive/task5err.log 0
+42313 /home/dewbaunchee/951007/VorivodaMatvey/lab1archive/lab1out.txt 0
+42314 /home/dewbaunchee/951007/VorivodaMatvey/lab1archive/task6err.log 0
