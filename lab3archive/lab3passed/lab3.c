@@ -139,7 +139,7 @@ void forkEncrypt(const char *plainFile, const char *cypheredFile, const char *ke
 
                 if (write(cfile, cyphered, count) != count)
                 {
-                    fprintf(stderr, "%s: pid: %d: Error while writing in file %s: \n", progname, getpid(), cypheredFile, strerror(errno));
+                    fprintf(stderr, "%s: pid: %d: Error while writing in file %s: %s\n", progname, getpid(), cypheredFile, strerror(errno));
                     exit(-1);
                 }
             }
