@@ -22,35 +22,37 @@
 #define GET_COUNT_IN_FINISH_MESSAGE
 
 /* FUNCTIONS INTERFACE LIST */
-void forkFor(int);              // Create all child processes
-void die(char *, int);          // Print error message end exit with failure
-void reflectPids();             // Reflect all pids in pid list
-void wrappedCloseFile();        // Close file and print errors if ones was occured
-void waitForInitializing();     // Check errors in one of processes and wait for reflecting pids
-void wrappedExit(int);          // Print message and exit
-void setUsrAction();            // Set action for handling SIGUSR1/SIGUSR2
-void setTermAction();           // Set action for handling SIGTERM
-void waitAllChildren();         // Wait all children
-void setGroup(int, int);        // Set group of pids
-unsigned long getCurrentTime(); // Get current time in microseconds
+void forkFor(int);                           // Create all child processes
+void die(char *, int);                       // Print error message end exit with failure
+void wrappedCloseFile();                     // Close file and print errors if ones was occured
+void waitForInitializing();                  // Check errors in one of processes and wait for reflecting pids
+void reflectPids();                          // Reflect all pids in pid list
+void wrappedExit(int);                       // Print message and exit
+void setAction(void (*sigAction)(int), int); // Set action
+void waitAllChildren();                      // Wait all children
+void setGroup(int, int);                     // Set group of pids
+unsigned long getCurrentTime();              // Get current time in microseconds
 
 //void actionLink(int, siginfo_t *, void *);      // SIGUSR1/SIGUSR2 handler
-void actionLink1(int sig, siginfo_t *info, void *text);
-void actionLink2(int sig, siginfo_t *info, void *text);
-void actionLink3(int sig, siginfo_t *info, void *text);
-void actionLink4(int sig, siginfo_t *info, void *text);
-void actionLink5(int sig, siginfo_t *info, void *text);
-void actionLink6(int sig, siginfo_t *info, void *text);
-void actionLink7(int sig, siginfo_t *info, void *text);
-void actionLink8(int sig, siginfo_t *info, void *text);
-void terminateAction(int, siginfo_t *, void *); // SIGTERM handler
+void actionLink1(int sig);
+void actionLink2(int sig);
+void actionLink3(int sig);
+void actionLink4(int sig);
+void actionLink5(int sig);
+void actionLink6(int sig);
+void actionLink7(int sig);
+void actionLink8(int sig);
+void terminateAction(int); // SIGTERM handler
+void stopAction(int);      // Ctrl+Z
+void intAction(int);       // Ctrl+C
+void chldAction(int, siginfo_t *, void *);
 
 /* CONSTANTS */
 const int CHILD_NUMBER_OF[PROCESS_COUNT] = {1, 4, 0, 0, 0, 2, 0, 1, 0};
 
 // 1->2 SIGUSR1   2->(3,4) SIGUSR2   4->5 SIGUSR1
 // 3->6 SIGUSR1   6->7 SIGUSR1       7->8 SIGUSR2   8->1 SIGUSR2
-const void (*actionLink[9])(int, siginfo_t *, void *) = {
+const void (*actionLink[9])(int) = {
     0,
     actionLink1,
     actionLink2,
@@ -59,9 +61,7 @@ const void (*actionLink[9])(int, siginfo_t *, void *) = {
     actionLink5,
     actionLink6,
     actionLink7,
-    actionLink8
-
-};
+    actionLink8};
 
 const int RECEIVING_SIGNALS[PROCESS_COUNT] = {
     0,       // 0
@@ -123,34 +123,39 @@ int main(int argc, char *argv[])
         pids[i] = 0;
 
     forkFor(0);
-    reflectPids();
+    if (selfNumber > 0)
+    {
+        if (RECEIVING_SIGNALS[selfNumber])
+            setAction(actionLink[selfNumber], RECEIVING_SIGNALS[selfNumber]);
+        setAction(&terminateAction, SIGTERM);
+    }
+    else
+    {
+        setAction(&intAction, SIGINT);
+        setAction(&stopAction, SIGTSTP);
+
+        struct sigaction action;
+        action.sa_flags = SA_SIGINFO;
+        action.sa_sigaction = chldAction;
+        sigaction(SIGCHLD, &action, 0);
+    }
+
     waitForInitializing();
+    reflectPids();
 
     switch (selfNumber)
     {
     case 0:
-        waitpid(pids[1], 0, 0);
-        munmap(pids, PROCESS_COUNT * sizeof(pid_t));
+        while (1)
+            ;
         break;
     case 1:
         kill(pids[2], SIGUSR1);
         printf("%d %d %d put USR1 %lu\n", selfNumber, getpid(), getppid(), getCurrentTime());
-
-        while (usr1Get + usr2Get < USR_GET_LIMIT)
-            pause();
-        ;
-        for (int processIndex = 2; processIndex < PROCESS_COUNT; processIndex++)
-        {
-            kill(pids[processIndex], SIGTERM);
-        }
-        waitAllChildren();
-        wrappedExit(0);
+        fflush(stdout);
     default:
         while (1)
-        {
-            pause();
-        }
-        wrappedExit(0);
+            ;
     }
 
     return 0;
@@ -158,12 +163,25 @@ int main(int argc, char *argv[])
 
 void setGroup(int pid, int groupPid)
 {
-    //if (setpgid(getpid(), pids[GROUPS[selfNumber]]) == -1)
     if (setpgid(pid, groupPid) == -1)
     {
-        printf("pid: %d group pid %d\n", getpid(), pids[GROUPS[selfNumber]]);
         die("Error during setting group", selfNumber);
     }
+}
+
+void reflectPids()
+{
+    FILE *tmp = fopen(TEMP_PIDS_FILE, "w");
+    if (tmp == NULL)
+    {
+        die("Can't create temp file", 0);
+    }
+
+    for (int i = 0; i < PROCESS_COUNT; i++)
+    {
+        fprintf(tmp, "%d\n", pids[i]);
+    }
+    wrappedCloseFile(tmp);
 }
 
 void waitAllChildren()
@@ -183,110 +201,48 @@ unsigned long getCurrentTime()
 #endif
 }
 
-void terminateAction(int sig, siginfo_t *info, void *text)
+void intAction(int sig)
 {
+    for (int i = 1; i < PROCESS_COUNT; i++)
+    {
+        kill(pids[i], SIGTERM);
+    }
+    waitAllChildren();
+    exit(1);
+}
+
+void stopAction(int sig)
+{
+    char * buf = calloc(256, sizeof(char));
+    sprintf(buf, "ps f -C %s", progname);
+    system(buf);
+    free(buf);
+}
+
+void chldAction(int sig, siginfo_t *info, void *text)
+{
+    if (pids[1] == wait(0) && info->si_code == CLD_EXITED)
+    {
+        munmap(pids, PROCESS_COUNT * sizeof(pid_t));
+        exit(0);
+    }
+}
+
+void terminateAction(int sig)
+{
+    for(int i = 0; i < CHILD_NUMBER_OF[selfNumber]; i++) {
+        kill(pids[CHILD_IDS_OF[selfNumber][i]], SIGTERM);
+    }
+
     waitAllChildren();
     wrappedExit(0);
 }
 
-void setUsrAction()
+void setAction(void (*sigAction)(int), int signum)
 {
-    if (selfNumber == 0)
-        return;
-
     struct sigaction action;
-    memset(&action, 0, sizeof(action));
-    action.sa_sigaction = actionLink[selfNumber];
-
-    sigset_t sigset;
-    sigemptyset(&sigset);
-    sigaddset(&sigset, RECEIVING_SIGNALS[selfNumber]);
-    action.sa_mask = sigset;
-    action.sa_flags = SA_SIGINFO;
-
-    sigaction(RECEIVING_SIGNALS[selfNumber], &action, 0);
-}
-
-void setTermAction()
-{
-    if (selfNumber < 2)
-        return;
-
-    struct sigaction action;
-    memset(&action, 0, sizeof(action));
-    action.sa_sigaction = terminateAction;
-
-    sigset_t sigset;
-    sigemptyset(&sigset);
-    sigaddset(&sigset, SIGTERM);
-    action.sa_mask = sigset;
-    action.sa_flags = SA_SIGINFO;
-
-    sigaction(SIGTERM, &action, 0);
-}
-
-void waitForInitializing()
-{
-    char notInitialized;
-    do
-    {
-        notInitialized = 0;
-        for (int i = 0; i < PROCESS_COUNT; i++)
-        {
-            if (pids[i] == -1)
-            {
-                die("Error occured in one of the processes.", i);
-            }
-            else if (pids[i] == 0)
-            {
-                notInitialized = 1;
-            }
-        }
-    } while (notInitialized);
-}
-
-void wrappedCloseFile(FILE *file)
-{
-    if (fclose(file) != 0)
-    {
-        fprintf(stderr, "%s: pid: %d: Error during closing file. %s\n", progname, getpid(), strerror(errno));
-    }
-}
-
-void reflectPids()
-{
-    FILE *tmp = fopen(TEMP_PIDS_FILE, "w");
-    if (tmp == NULL)
-    {
-        die("Can't create temp file", 0);
-    }
-
-    for (int i = 0; i < PROCESS_COUNT; i++)
-    {
-        fprintf(tmp, "%d\n", pids[i]);
-    }
-    wrappedCloseFile(tmp);
-}
-
-void die(char *message, int processIndex)
-{
-    if (strlen(message) > 0)
-    {
-        fprintf(stderr, "%s: Error in proccess %d: %s. Strerror: %s\n", progname, processIndex, message, strerror(errno));
-    }
-    pids[processIndex] = -1;
-    wrappedExit(-1);
-}
-
-void wrappedExit(int status)
-{
-#ifdef GET_COUNT_IN_FINISH_MESSAGE
-    printf("%d %d %d finished work after putting %3d SIGUSR1 and %3d SIGUSR2, getting %3d SIGUSR1 and %3d SIGUSR2\n", selfNumber, getpid(), getppid(), usr1Put, usr2Put, usr1Get, usr2Get);
-#else
-    printf("%d %d %d finished work after putting %3d SIGUSR1 and %3d SIGUSR2\n", selfNumber, getpid(), getppid(), usr1Put, usr2Put);
-#endif
-    munmap(pids, PROCESS_COUNT * sizeof(pid_t));
-    exit(status);
+    action.sa_handler = sigAction;
+    sigaction(signum, &action, 0);
 }
 
 void forkFor(int parentNum)
@@ -305,8 +261,6 @@ void forkFor(int parentNum)
         case 0:
             selfNumber = childNumber;
             pids[selfNumber] = getpid();
-            setUsrAction();
-            setTermAction();
             forkFor(selfNumber);
             return;
         case -1:
@@ -326,17 +280,19 @@ void forkFor(int parentNum)
     }
 }
 
-void actionLink1(int sig, siginfo_t *info, void *text)
+void actionLink1(int sig)
 {
+    if(usr1Get + usr2Get == USR_GET_LIMIT) terminateAction(0);
     printf("%d %d %d get USR2 %lu\n", selfNumber, getpid(), getppid(), getCurrentTime());
     usr2Get++;
 
     kill(pids[2], SIGUSR1);
     printf("%d %d %d put USR1 %lu\n", selfNumber, getpid(), getppid(), getCurrentTime());
     usr1Put++;
+    fflush(stdout);
 }
 
-void actionLink2(int sig, siginfo_t *info, void *text)
+void actionLink2(int sig)
 {
     printf("%d %d %d get USR1 %lu\n", selfNumber, getpid(), getppid(), getCurrentTime());
     usr1Get++;
@@ -344,9 +300,10 @@ void actionLink2(int sig, siginfo_t *info, void *text)
     kill(-pids[3], SIGUSR2);
     printf("%d %d %d put USR2 %lu\n", selfNumber, getpid(), getppid(), getCurrentTime());
     usr2Put++;
+    fflush(stdout);
 }
 
-void actionLink3(int sig, siginfo_t *info, void *text)
+void actionLink3(int sig)
 {
     printf("%d %d %d get USR2 %lu\n", selfNumber, getpid(), getppid(), getCurrentTime());
     usr2Get++;
@@ -354,9 +311,10 @@ void actionLink3(int sig, siginfo_t *info, void *text)
     kill(pids[6], SIGUSR1);
     printf("%d %d %d put USR1 %lu\n", selfNumber, getpid(), getppid(), getCurrentTime());
     usr1Put++;
+    fflush(stdout);
 }
 
-void actionLink4(int sig, siginfo_t *info, void *text)
+void actionLink4(int sig)
 {
     printf("%d %d %d get USR2 %lu\n", selfNumber, getpid(), getppid(), getCurrentTime());
     usr2Get++;
@@ -364,15 +322,17 @@ void actionLink4(int sig, siginfo_t *info, void *text)
     kill(pids[5], SIGUSR1);
     printf("%d %d %d put USR1 %lu\n", selfNumber, getpid(), getppid(), getCurrentTime());
     usr1Put++;
+    fflush(stdout);
 }
 
-void actionLink5(int sig, siginfo_t *info, void *text)
+void actionLink5(int sig)
 {
     printf("%d %d %d get USR1 %lu\n", selfNumber, getpid(), getppid(), getCurrentTime());
     usr1Get++;
+    fflush(stdout);
 }
 
-void actionLink6(int sig, siginfo_t *info, void *text)
+void actionLink6(int sig)
 {
     printf("%d %d %d get USR1 %lu\n", selfNumber, getpid(), getppid(), getCurrentTime());
     usr1Get++;
@@ -380,9 +340,10 @@ void actionLink6(int sig, siginfo_t *info, void *text)
     kill(pids[7], SIGUSR1);
     printf("%d %d %d put USR1 %lu\n", selfNumber, getpid(), getppid(), getCurrentTime());
     usr1Put++;
+    fflush(stdout);
 }
 
-void actionLink7(int sig, siginfo_t *info, void *text)
+void actionLink7(int sig)
 {
     printf("%d %d %d get USR2 %lu\n", selfNumber, getpid(), getppid(), getCurrentTime());
     usr2Get++;
@@ -390,9 +351,10 @@ void actionLink7(int sig, siginfo_t *info, void *text)
     kill(pids[8], SIGUSR2);
     printf("%d %d %d put USR2 %lu\n", selfNumber, getpid(), getppid(), getCurrentTime());
     usr2Put++;
+    fflush(stdout);
 }
 
-void actionLink8(int sig, siginfo_t *info, void *text)
+void actionLink8(int sig)
 {
     printf("%d %d %d get USR2 %lu\n", selfNumber, getpid(), getppid(), getCurrentTime());
     usr2Get++;
@@ -400,4 +362,56 @@ void actionLink8(int sig, siginfo_t *info, void *text)
     kill(pids[1], SIGUSR2);
     printf("%d %d %d put USR2 %lu\n", selfNumber, getpid(), getppid(), getCurrentTime());
     usr2Put++;
+    fflush(stdout);
+}
+
+void waitForInitializing()
+{
+    char notInitialized;
+    do
+    {
+        notInitialized = 0;
+        for (int i = 0; i < PROCESS_COUNT && !notInitialized; i++)
+        {
+            if (pids[i] == -1)
+            {
+                die("Error occured in one of the processes.", i);
+            }
+            else if (pids[i] == 0)
+            {
+                notInitialized = 1;
+            }
+        }
+    } while (notInitialized);
+}
+
+void wrappedCloseFile(FILE *file)
+{
+    if (fclose(file) != 0)
+    {
+        fprintf(stderr, "%s: pid: %d: Error during closing file. %s\n", progname, getpid(), strerror(errno));
+        fflush(stderr);
+    }
+}
+
+void die(char *message, int processIndex)
+{
+    if (strlen(message) > 0)
+    {
+        fprintf(stderr, "%s: Error in proccess %d: %s. Strerror: %s\n", progname, processIndex, message, strerror(errno));
+        fflush(stderr);
+    }
+    pids[processIndex] = -1;
+    wrappedExit(-1);
+}
+
+void wrappedExit(int status)
+{
+#ifdef GET_COUNT_IN_FINISH_MESSAGE
+    printf("%d %d %d finished work after putting %3d SIGUSR1 and %3d SIGUSR2, getting %3d SIGUSR1 and %3d SIGUSR2\n", selfNumber, getpid(), getppid(), usr1Put, usr2Put, usr1Get, usr2Get);
+#else
+    printf("%d %d %d finished work after putting %3d SIGUSR1 and %3d SIGUSR2\n", selfNumber, getpid(), getppid(), usr1Put, usr2Put);
+#endif
+    fflush(stdout);
+    exit(status);
 }

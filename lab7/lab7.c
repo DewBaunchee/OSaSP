@@ -27,11 +27,11 @@ N (вводится пользователем). Проверить работу
 #define TEMP_RESULT_FILE "/tmp/tempResult.txt"
 #define CYPHER_FOLDER "/tmp/cyphered"
 #define BUFFER_SIZE (16 * 1024 * 1024)
-#define PATHS_IN_PIPE_SIZE (2 * PATH_MAX + 4)
+#define PATHS_IN_PIPE_SIZE (PIPE_BUF * 2)
 #define NSOPS 1
 
 //#define USE_TEMP_FILE
-#define DEBUGING
+//#define DEBUGING
 //#define PRINT_DURATION
 
 // LIST OF FILE
@@ -127,7 +127,6 @@ const char *progname;
 char *startDir;
 int maxProcessCount;
 int **pipefd;
-int filesCount;
 
 FILE *keyFile;
 FILE *tempOut;
@@ -198,7 +197,6 @@ void sigintHandler(int signum)
 {
     while (wait(NULL) != -1)
         ;
-    semctl(filesCount, 1, IPC_RMID);
     for (int i = 0; i < maxProcessCount; i++)
     {
         close(pipefd[i][0]);
@@ -238,7 +236,6 @@ void encrypt(List list, const char *key)
     signal(SIGCHLD, SIG_IGN);
     pipefd = calloc(maxProcessCount, sizeof(int *));
     char *paths = calloc(PATHS_IN_PIPE_SIZE, sizeof(char));
-    filesCount = semget(IPC_PRIVATE, 1, IPC_CREAT | 0666);
 
     for (int i = 0; i < maxProcessCount; i++)
     {
@@ -255,24 +252,23 @@ void encrypt(List list, const char *key)
             action.sa_handler = SIG_DFL;
             action.sa_flags = SA_RESTART;
             sigaction(SIGTSTP, &action, 0);
+
             wrappedCloseFileDescriptor(pipefd[i][1]);
 
             while (1)
             {
                 char *plainFile;
                 char *cypheredFile;
+                errno = 0;
                 int count = read(pipefd[i][0], paths, PATHS_IN_PIPE_SIZE);
-                if (paths[0] == 0)
+                if (count == 0)
                 {
-                    printf("Path is zero\n");
                     break;
                 }
 
 #ifdef DEBUGING
-                printf("%d: Read from pipe %d\n%s", getpid(), count, paths);
+                printf("%d: Read from pipe %d {%s}\n", getpid(), count, paths);
 #endif
-                if (count == 0)
-                    continue;
                 if (count == -1)
                 {
                     fprintf(stderr, "%s: %d: Error while reading from pipe: %s\n", progname, getpid(), strerror(errno));
@@ -291,6 +287,7 @@ void encrypt(List list, const char *key)
                 cypheredFile = calloc(length - i - 1, sizeof(char));
                 strncpy(cypheredFile, paths + i + 2, length - i - 2);
 
+                paths[1] = 0;
                 fileEncrypt(plainFile, cypheredFile, key);
 
                 free(plainFile);
@@ -305,6 +302,7 @@ void encrypt(List list, const char *key)
             exit(0);
         }
         }
+
         wrappedCloseFileDescriptor(pipefd[i][0]);
     }
 
@@ -312,34 +310,24 @@ void encrypt(List list, const char *key)
     File current = list->begin;
     while (current != NULL)
     {
+        sprintf(paths, "%s//%s", current->pfile, current->cfile);
+        write(pipefd[pipeIndex][1], paths, PATHS_IN_PIPE_SIZE);
 #ifdef DEBUGING
-        printf("%d: Adding to pipe #%d %s and %s\n", getpid(), pipeIndex, current->pfile, current->cfile);
+        printf("%d: Added to pipe #%d %s and %s\n", getpid(), pipeIndex, current->pfile, current->cfile);
 #endif
 
-        sprintf(paths, "%s//%s\n", current->pfile, current->cfile);
-        write(pipefd[pipeIndex][1], paths, PATHS_IN_PIPE_SIZE);
         current = current->next;
         pipeIndex = (pipeIndex + 1) % maxProcessCount;
     }
 
 #ifdef DEBUGING
-    printf("Finalizing\n");
-#endif
-
-    paths[0] = 0;
-    for (int i = 0; i < maxProcessCount; i++)
-        write(pipefd[i][1], paths, PATHS_IN_PIPE_SIZE);
-    free(paths);
-
-    while (wait(NULL) != -1)
-        ;
-
-#ifdef DEBUGING
-    printf("Closing pipe\n");
+    printf("\n\n\n\n-------------------------------------------------------Closing pipes---------------------------------------------------\n\n\n\n\n");
 #endif
 
     for (int i = 0; i < maxProcessCount; i++)
         wrappedCloseFileDescriptor(pipefd[i][1]);
+    while (wait(NULL) != -1)
+        ;
 }
 
 void rec(const char *start, List list)
@@ -559,7 +547,7 @@ int wrappedCloseFile(FILE *file)
 int wrappedCloseFileDescriptor(int fd)
 {
 #ifdef DEBUGING
-    printf("%d: Closing desriptor\n", getpid());
+    //  printf("%d: Closing descriptor\n", getpid());
 #endif
     if (close(fd) != 0)
     {
